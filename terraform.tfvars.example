@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars and fill in your values.
+
+vpc_id = "vpc-xxxxxxxxxxxxxxxxx"
+
+subnet_ids = [
+  "subnet-xxxxxxxxxxxxxxxxx",
+  "subnet-yyyyyyyyyyyyyyyyy",
+]
+
+# Regional ACM certificate for the custom domain (us-east-1).
+acm_cert_arn = "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+
+domain_name = "api.example.com"

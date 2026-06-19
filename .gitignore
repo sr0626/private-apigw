@@ -1,0 +1,23 @@
+# Terraform state (contains secrets) — use a remote backend instead
+*.tfstate
+*.tfstate.*
+
+# Terraform working dir & crash logs
+.terraform/
+crash.log
+crash.*.log
+
+# Provider lock file IS committed on purpose (pins provider versions):
+# .terraform.lock.hcl  <-- intentionally NOT ignored
+
+# Account-specific variable values (commit terraform.tfvars.example instead)
+terraform.tfvars
+*.auto.tfvars
+
+# Private keys / local cert material (regenerable)
+*.pem
+*.key
+certs/
+
+# Build artifacts
+lambda.zip
