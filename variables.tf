@@ -16,7 +16,7 @@ variable "domain_name" {
 }
 
 # Local path to the CA public cert bundle uploaded to the ALB trust store.
-# Produced by ./certs/gen-mtls-ca.sh.
+# Produced by ./scripts/gen-mtls-ca.sh.
 variable "mtls_ca_bundle_path" {
   type    = string
   default = "certs/mtls/ca.crt"

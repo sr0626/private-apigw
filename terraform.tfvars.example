@@ -16,5 +16,5 @@ subnet_ids = [
 domain_name = "api.example.com"
 
 # Optional: local path to the CA bundle for the ALB mTLS trust store.
-# Defaults to certs/mtls/ca.crt (produced by ./certs/gen-mtls-ca.sh).
+# Defaults to certs/mtls/ca.crt (produced by ./scripts/gen-mtls-ca.sh).
 # mtls_ca_bundle_path = "certs/mtls/ca.crt"

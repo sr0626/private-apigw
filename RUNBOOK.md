@@ -55,7 +55,7 @@ The ALB server certificate is generated and imported by Terraform — there is n
 ## 2. Generate the mTLS CA and a client certificate
 
 ```bash
-./certs/gen-mtls-ca.sh
+./scripts/gen-mtls-ca.sh
 ```
 
 This writes (all under the gitignored `certs/mtls/`):
