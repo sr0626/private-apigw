@@ -1,8 +1,9 @@
 # Trust store for ALB mutual TLS: an S3 object holding the CA public cert
 # bundle that client certificates are validated against.
 #
-# Generate the bundle locally first:  ./scripts/gen-mtls-ca.sh
-# That writes certs/mtls/ca.crt, which is uploaded below.
+# Generate the org PKI first:  ./scripts/gen-pki.sh
+# That writes certs/pki/ca.crt (the org CA), which is uploaded below as the
+# trust store used to validate client certs.
 
 data "aws_caller_identity" "current" {}
 

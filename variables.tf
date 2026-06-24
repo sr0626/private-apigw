@@ -15,9 +15,19 @@ variable "domain_name" {
   type = string
 }
 
-# Local path to the CA public cert bundle uploaded to the ALB trust store.
-# Produced by ./scripts/gen-mtls-ca.sh.
+# Org PKI material produced by ./scripts/gen-pki.sh (under certs/pki/).
+# ca.crt is both the ALB trust store and the server cert's chain.
 variable "mtls_ca_bundle_path" {
   type    = string
-  default = "certs/mtls/ca.crt"
+  default = "certs/pki/ca.crt"
+}
+
+variable "server_cert_path" {
+  type    = string
+  default = "certs/pki/server.crt"
+}
+
+variable "server_key_path" {
+  type    = string
+  default = "certs/pki/server.key"
 }

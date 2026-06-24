@@ -20,6 +20,6 @@ output "mtls_trust_store_arn" {
 }
 
 output "server_certificate_arn" {
-  description = "Self-signed ACM server cert used by the ALB and custom domain."
+  description = "ACM server cert (Type IMPORTED, issued by the org CA) used by the ALB and custom domain."
   value       = aws_acm_certificate.server.arn
 }

@@ -17,21 +17,27 @@ fully private. See [RUNBOOK.md](RUNBOOK.md) for the deploy/test walkthrough.
 ## Architecture
 
 ```
-            (inside the VPC, client presents a client certificate)
+            (inside the VPC, client presents an org-CA-signed client cert)
 client ──► Route 53 private zone (api.evolvity.com)
               │  alias
               ▼
         Internal ALB ── HTTPS listener, mutual_authentication = "verify"
-              │            └─ trust store (CA bundle in S3)
+              │            ├─ server cert: org-CA-signed (clients verify it)
+              │            └─ trust store: org CA bundle in S3 (validates client)
               │  forward (HTTPS) to VPC endpoint ENI IPs
               ▼
         Interface VPC endpoint (execute-api)
               │  domain-name access association
               ▼
         Private custom domain ──(base path mapping)──► REST API "prod" stage
-              │  domain-name resource policy                    │
-              ▼                                                 ▼
-        aws:SourceVpce check                              Lambda (AWS_PROXY)
+              │  server cert: self-signed (internal; ALB              │
+              │  does not verify it) · resource policy                ▼
+              ▼                                              Lambda (AWS_PROXY)
+        aws:SourceVpce check
+
+  Org PKI (scripts/gen-pki.sh): one CA issues the client cert, the ALB server
+  cert, and is the trust store. The private domain uses a separate self-signed
+  cert because a private custom domain won't serve a CA-signed cert.
 ```
 
 Full architecture, all AWS services involved:
@@ -39,7 +45,7 @@ Full architecture, all AWS services involved:
 ```mermaid
 flowchart TB
     %% --- Global / regional services (outside the VPC) ---
-    ACM["🔏 ACM<br/>self-signed server cert<br/>(acm.tf)"]
+    ACM["🔏 ACM (both IMPORTED)<br/>org-CA cert → ALB listener<br/>self-signed cert → custom domain<br/>(acm.tf)"]
     S3["🪣 S3 trust store<br/>ca.crt CA bundle<br/>(mtls_truststore.tf)"]
     IAM["👤 IAM roles<br/>Lambda exec role · EC2 SSM role"]
     CW["📊 CloudWatch Logs<br/>Lambda log group"]
@@ -69,7 +75,8 @@ flowchart TB
     L --> TG -->|HTTPS| VPCE --> DN -->|base path mapping| API --> LAM
 
     %% --- Trust anchors / supporting services ---
-    ACM -.->|server cert| L
+    ACM -.->|org-CA cert| L
+    ACM -.->|self-signed cert| DN
     S3 -.->|validate client cert| L
     SSM -.->|session| EC2
     IAM -.-> EC2
@@ -86,7 +93,7 @@ flowchart TB
 |---------|--------------------|
 | **Route 53** | Private hosted zone; alias record `api.evolvity.com` → ALB |
 | **ELBv2 (ALB)** | Internal ALB, mTLS HTTPS listener + IP target group, ALB security group |
-| **ACM** | Self-signed server cert (imported) used by the ALB listener and the custom domain |
+| **ACM** | Two imported certs: org-CA-signed (ALB listener, client-facing) and self-signed (private custom domain, internal) |
 | **S3** | Trust store bucket holding the CA bundle (`ca.crt`) for client-cert validation |
 | **VPC Interface Endpoint** | `execute-api` ENIs; security group locked to the ALB only |
 | **API Gateway** | Private REST API, private custom domain, resource policies (`aws:SourceVpce`) |
@@ -114,14 +121,14 @@ Access is gated by independent, layered controls:
 |------|---------|
 | [providers.tf](providers.tf) | AWS + archive providers, region from `var.aws_region` (default `us-west-2`) |
 | [variables.tf](variables.tf) | Input variables |
-| [acm.tf](acm.tf) | Self-signed server cert for the domain, imported into ACM |
+| [acm.tf](acm.tf) | Two ACM imports: org-PKI CA-signed cert (ALB listener) + self-signed cert (private custom domain) |
 | [api_gateway.tf](api_gateway.tf) | Private REST API, `/hello` method, integration, deployment, stage, resource policy |
 | [lambda.tf](lambda.tf) / [code/lambda.py](code/lambda.py) | Lambda function, role, log group, and the API Gateway invoke permission |
 | [vpc_endpoint.tf](vpc_endpoint.tf) | Interface VPC endpoint, its security group (ALB-only ingress), and the domain-name access association |
 | [custom_domain.tf](custom_domain.tf) | Private custom domain, its resource policy, and the base path mapping |
 | [mtls_alb.tf](mtls_alb.tf) | Internal ALB, its security group, the mTLS HTTPS listener, and the VPC-endpoint target group |
 | [mtls_truststore.tf](mtls_truststore.tf) | S3 bucket + CA bundle object + ALB trust store |
-| [scripts/gen-mtls-ca.sh](scripts/gen-mtls-ca.sh) | Generates the self-signed CA bundle and a sample client cert into `certs/mtls/` |
+| [scripts/gen-pki.sh](scripts/gen-pki.sh) | Org PKI: generates the CA, the server cert, and a client cert (all CA-signed) into `certs/pki/` |
 | [route53_private.tf](route53_private.tf) | Private hosted zone + alias record to the ALB |
 | [ec2_test_instance.tf](ec2_test_instance.tf) | Optional test EC2 instance (SSM-managed) for in-VPC validation |
 | [outputs.tf](outputs.tf) | API id, invoke URL, custom domain, ALB DNS name, trust store ARN |
@@ -129,14 +136,17 @@ Access is gated by independent, layered controls:
 ## Prerequisites
 
 - An existing VPC and two subnets.
-- No ACM certificate to provision by hand — Terraform generates a self-signed
-  server cert for `domain_name` (with a matching `subjectAltName`) and imports
-  it into ACM in `var.aws_region` ([acm.tf](acm.tf)). It is used by both the ALB
-  listener and the API Gateway custom domain.
+- An **org PKI** (one CA) that issues the client-facing server cert and the
+  client certs. Here it's simulated locally by [scripts/gen-pki.sh](scripts/gen-pki.sh);
+  Terraform imports the org-CA-signed server cert into ACM (Type IMPORTED,
+  [acm.tf](acm.tf)) for the **ALB listener** (what clients verify). The
+  **private custom domain** gets a separate **self-signed** cert (also in
+  [acm.tf](acm.tf)) — a private custom domain won't serve a CA-signed cert, and
+  the ALB doesn't verify the backend cert, so it's internal-only. Run the script
+  before `terraform apply` so the cert files exist.
 - Terraform with the AWS provider **>= 5.34** (pinned `~> 5.0` in
   [providers.tf](providers.tf); 5.34 is the first release with private custom
-  domain support), the `archive` provider `~> 2.4`, and the `tls` provider
-  `~> 4.0` (for the self-signed server cert).
+  domain support) and the `archive` provider `~> 2.4`.
 - AWS credentials with permission to manage the resources.
 
 ## Usage
@@ -146,7 +156,7 @@ are in **[RUNBOOK.md](RUNBOOK.md)**. The short version:
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars   # then fill in your values
-./scripts/gen-mtls-ca.sh                        # generate CA + client cert
+./scripts/gen-pki.sh                            # org PKI: CA + server + client certs
 terraform init
 terraform apply
 ```
@@ -171,9 +181,9 @@ Notes:
 - The stage is baked into the base path mapping, so the URL is `/hello`, **not**
   `/prod/hello`. The `/prod/...` form only applies to the raw `execute-api`
   `invoke_url` output.
-- The ALB server cert is the self-signed cert from [acm.tf](acm.tf), so `-k`
-  (or `--cacert`) is needed to skip *server* verification — the mTLS *client*
-  auth (`--cert`/`--key`) is still enforced regardless.
+- The ALB server cert is issued by the org CA, so use `-k` to skip *server*
+  verification, **or** verify it properly with `--cacert certs/pki/ca.crt` (the
+  same org CA). The mTLS *client* auth (`--cert`/`--key`) is enforced regardless.
 
 ## Notes / limitations
 
@@ -181,9 +191,15 @@ Notes:
   TLS requires a *regional* custom domain and is not available on private APIs,
   which is why the ALB exists. The hop from ALB to the VPC endpoint is plain
   HTTPS inside the VPC (the ALB does not re-present a client cert).
-- The trust store uses a **self-signed CA** generated by `scripts/gen-mtls-ca.sh`
-  (POC-grade, no revocation). For production, issue client certs from AWS
-  Private CA and add a CRL to the trust store.
+- A single **org CA** (`scripts/gen-pki.sh`, POC-grade, no revocation) issues
+  the client-facing server cert and client certs and is the ALB trust store. For
+  production, use your real PKI / AWS Private CA and add a CRL to the trust store.
+- **Two server certs by necessity.** The ALB listener uses the org-CA-signed
+  cert (clients verify it against the org CA). The **private custom domain uses
+  a self-signed cert** — a private API Gateway custom domain will not serve a
+  CA-signed cert (its TLS frontend resets the connection). Since the ALB never
+  verifies the backend cert, that self-signed cert is internal-only and
+  invisible to clients.
 - The ALB target group points at the VPC endpoint ENI **private IPs**, derived
   with one target per subnet. If you change the subnet count, the target
   attachments follow `length(var.subnet_ids)`.

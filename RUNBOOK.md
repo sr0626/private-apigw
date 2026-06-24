@@ -15,10 +15,10 @@ generate certificates, deploy with Terraform, and verify mutual TLS works.
 ## 0. Prerequisites
 
 - An existing **VPC** and at least **two subnets** (one per AZ recommended).
-- **No ACM cert to create by hand** — Terraform ([acm.tf](acm.tf)) generates a
-  self-signed server cert for `domain_name` (with a matching `subjectAltName`)
-  and imports it into ACM. It is the **ALB server certificate** and is also used
-  by the API Gateway custom domain.
+- An **org PKI** issues the server and client certs. Here it's simulated by
+  [scripts/gen-pki.sh](scripts/gen-pki.sh) (§2); Terraform imports the resulting
+  server cert into ACM (Type IMPORTED, [acm.tf](acm.tf)) for the ALB listener and
+  the API Gateway custom domain. No `acm_cert_arn` to supply by hand.
 - Terraform with AWS provider **>= 5.34** (private custom domains) — the
   `aws_lb_trust_store` / listener `mutual_authentication` features also require
   a recent 5.x. The repo pins `~> 5.0` in [providers.tf](providers.tf).
@@ -45,30 +45,31 @@ Edit `terraform.tfvars`:
 | `vpc_id` | Your VPC id |
 | `subnet_ids` | Two (or more) subnet ids in that VPC |
 | `domain_name` | e.g. `api.evolvity.com` |
-| `mtls_ca_bundle_path` | *(optional)* defaults to `certs/mtls/ca.crt` |
+| `mtls_ca_bundle_path` | *(optional)* defaults to `certs/pki/ca.crt` |
+| `server_cert_path` / `server_key_path` | *(optional)* default to `certs/pki/server.{crt,key}` |
 
-The ALB server certificate is generated and imported by Terraform — there is no
-`acm_cert_arn` to supply.
+The server cert is created externally by the org PKI (§2) and imported into ACM
+by Terraform — there is no `acm_cert_arn` to supply.
 
 ---
 
-## 2. Generate the mTLS CA and a client certificate
+## 2. Generate the org PKI (CA + server + client certs)
 
 ```bash
-./scripts/gen-mtls-ca.sh
+./scripts/gen-pki.sh                 # or: ./scripts/gen-pki.sh <domain>
 ```
 
-This writes (all under the gitignored `certs/mtls/`):
+One CA issues everything. This writes (all under the gitignored `certs/pki/`):
 
 | File | Role |
 |------|------|
-| `ca.crt` | CA public cert — **uploaded to the ALB trust store** by Terraform |
-| `ca.key` | CA private key — keep local, used only to sign client certs |
-| `client.crt` | Sample **client certificate** callers present |
-| `client.key` | Client private key |
+| `ca.crt` | Org CA public cert — ALB **trust store**, server-cert **chain**, and client trust root |
+| `ca.key` | Org CA private key — keep local, signs the server and client certs |
+| `server.crt` / `server.key` | **Server cert** (CN/SAN = domain) — imported into ACM (Type IMPORTED) |
+| `client.crt` / `client.key` | **Client cert** callers present for mTLS |
 
-To mint additional client certs later, re-run the relevant `openssl` steps in
-the script (or copy them) against the existing `ca.crt` / `ca.key`.
+To mint additional client certs later, re-run the client `openssl` steps in the
+script against the existing `ca.crt` / `ca.key`.
 
 ---
 
@@ -82,7 +83,9 @@ terraform apply
 
 What gets created/changed:
 
-- **Self-signed server cert imported into ACM** for `domain_name` ([acm.tf](acm.tf))
+- **Two ACM imports** ([acm.tf](acm.tf)): the org-CA-signed server cert (ALB
+  listener, client-facing) and a self-signed cert (private custom domain —
+  a private domain won't serve a CA-signed cert; the ALB doesn't verify it)
 - **S3 bucket + `ca.crt` object + `aws_lb_trust_store`** ([mtls_truststore.tf](mtls_truststore.tf))
 - **Internal ALB**, security group, **mTLS HTTPS listener** (`verify` mode),
   and an **IP target group** pointing at the VPC endpoint ENIs ([mtls_alb.tf](mtls_alb.tf))
@@ -119,19 +122,21 @@ aws ec2 describe-instances --region us-west-2 \
 ```
 
 Inside the session, drop your client cert/key onto the host (paste the contents
-of the local `certs/mtls/client.crt` and `client.key`):
+of the local `certs/pki/client.crt` and `client.key`):
 
 ```bash
 cat > /tmp/client.crt <<'EOF'
-<paste certs/mtls/client.crt>
+<paste certs/pki/client.crt>
 EOF
 cat > /tmp/client.key <<'EOF'
-<paste certs/mtls/client.key>
+<paste certs/pki/client.key>
 EOF
 ```
 
-`-k` is used below because the ALB server cert is self-signed; this skips
-*server* verification only — mTLS *client* auth is still fully enforced.
+`-k` is used below to skip *server* verification (the ALB server cert is issued
+by the org CA, which the host doesn't trust by default) — mTLS *client* auth is
+still fully enforced. To verify the server properly instead, also copy
+`certs/pki/ca.crt` to the host and swap `-k` for `--cacert /tmp/ca.crt`.
 
 ### 4a. With a valid client cert → success ✅
 
@@ -171,8 +176,9 @@ CA; all other requests fail at the handshake. ✔ Validated.
 
 | Symptom | Likely cause / fix |
 |---------|--------------------|
-| `handshake failure` even with `--cert` | Client cert not signed by the CA in the trust store, or trust store object out of date. Re-run `gen-mtls-ca.sh`, `terraform apply` (the S3 object `etag` triggers re-upload). |
+| `handshake failure` even with `--cert` | Client cert not signed by the CA in the trust store, or trust store object out of date. Re-run `gen-pki.sh`, `terraform apply` (the S3 object `etag` triggers re-upload). |
 | `503` from the ALB | Target group unhealthy. Health check expects `200,403,404` from the ENI IPs; confirm the VPC endpoint is `available` and the ALB SG → VPCE SG rule exists. |
+| `curl (56)` / connection reset *after* the handshake (mTLS succeeded, request sent, no response) | Backend hop, not mTLS. Check the VPCE↔domain **access association** points at the current domain id (`get-domain-name-access-associations`). Caused by recreating the domain without rebuilding the association/base-path-mapping, or by putting a **CA-signed cert on the private custom domain** (use self-signed there). A clean `destroy`+`apply` rebuilds the wiring in order. |
 | `403 {"message":"Forbidden"}` returned to client | Request reached API Gateway but `aws:SourceVpce` / domain access association rejected it. Confirm the Host header is `api.evolvity.com` (don't override it) and the access association is in place. |
 | Connection times out | DNS resolved to the ALB but the client host can't reach it — check the ALB SG ingress (443 from VPC CIDR) and that the client is in the VPC. |
 | `SessionManagerPlugin is not found` on `aws ssm start-session` | Install the plugin on your workstation: `brew install --cask session-manager-plugin`, then retry. |
@@ -187,4 +193,4 @@ terraform destroy
 ```
 
 The trust store S3 bucket has `force_destroy = true`, so the `ca.crt` object is
-removed with it. Local `certs/mtls/` material is yours to delete manually.
+removed with it. Local `certs/pki/` material is yours to delete manually.

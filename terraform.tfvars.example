@@ -10,11 +10,12 @@ subnet_ids = [
   "subnet-yyyyyyyyyyyyyyyyy",
 ]
 
-# Note: the ACM server certificate is generated and imported by Terraform
-# (acm.tf) as a self-signed cert for domain_name — no acm_cert_arn is needed.
+# Note: the server cert is created externally by the org PKI
+# (./scripts/gen-pki.sh) and imported into ACM by acm.tf — no acm_cert_arn.
 
 domain_name = "api.example.com"
 
-# Optional: local path to the CA bundle for the ALB mTLS trust store.
-# Defaults to certs/mtls/ca.crt (produced by ./scripts/gen-mtls-ca.sh).
-# mtls_ca_bundle_path = "certs/mtls/ca.crt"
+# Optional: org PKI material produced by ./scripts/gen-pki.sh (defaults shown).
+# mtls_ca_bundle_path = "certs/pki/ca.crt"
+# server_cert_path    = "certs/pki/server.crt"
+# server_key_path     = "certs/pki/server.key"
