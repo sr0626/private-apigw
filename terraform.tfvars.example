@@ -1,5 +1,8 @@
 # Copy to terraform.tfvars and fill in your values.
 
+# Optional: AWS region (defaults to us-west-2).
+# aws_region = "us-west-2"
+
 vpc_id = "vpc-xxxxxxxxxxxxxxxxx"
 
 subnet_ids = [
@@ -7,7 +10,11 @@ subnet_ids = [
   "subnet-yyyyyyyyyyyyyyyyy",
 ]
 
-# Regional ACM certificate for the custom domain (us-east-1).
-acm_cert_arn = "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+# Note: the ACM server certificate is generated and imported by Terraform
+# (acm.tf) as a self-signed cert for domain_name — no acm_cert_arn is needed.
 
 domain_name = "api.example.com"
+
+# Optional: local path to the CA bundle for the ALB mTLS trust store.
+# Defaults to certs/mtls/ca.crt (produced by ./certs/gen-mtls-ca.sh).
+# mtls_ca_bundle_path = "certs/mtls/ca.crt"

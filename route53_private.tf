@@ -11,9 +11,11 @@ resource "aws_route53_record" "api" {
   name    = var.domain_name
   type    = "A"
 
+  # Points at the mTLS ALB (not the VPC endpoint directly) so clients land on
+  # the mutual-TLS listener. The ALB then forwards to the VPC endpoint.
   alias {
-    name                   = aws_vpc_endpoint.execute_api.dns_entry[0].dns_name
-    zone_id                = aws_vpc_endpoint.execute_api.dns_entry[0].hosted_zone_id
+    name                   = aws_lb.mtls.dns_name
+    zone_id                = aws_lb.mtls.zone_id
     evaluate_target_health = false
   }
 }

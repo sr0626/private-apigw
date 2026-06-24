@@ -1,6 +1,6 @@
 resource "aws_api_gateway_domain_name" "custom" {
   domain_name     = var.domain_name
-  certificate_arn = var.acm_cert_arn
+  certificate_arn = aws_acm_certificate.server.arn
 
   endpoint_configuration {
     types = ["PRIVATE"]
