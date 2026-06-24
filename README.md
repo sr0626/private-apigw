@@ -115,6 +115,22 @@ Access is gated by independent, layered controls:
    Private custom domains are authorized against the `/domainnames/...` resource,
    which the REST API policy does **not** cover — this policy is required.
 
+## Certificates
+
+`scripts/gen-pki.sh` simulates **one org CA** that does three jobs, plus one
+internal self-signed cert that the private domain forces on us.
+
+| Cert | Issued by | Used by | Role |
+|------|-----------|---------|------|
+| `client.crt` | **org CA** | callers (`curl --cert`) | client identity for mTLS |
+| `server.crt` | **org CA** | ALB HTTPS listener | **client-facing** server cert (clients verify vs the CA); imported, `Type: IMPORTED` |
+| `ca.crt` | — *(is the CA)* | ALB trust store (S3) | validates incoming client certs |
+| domain cert | **self-signed** (Terraform `tls`) | private custom domain | internal ALB→domain hop only |
+
+- **One trust anchor, both directions.** The same org CA signs the client cert *and* the ALB server cert *and* is the trust store — so the ALB trusts clients (their certs chain to the CA) and clients trust the ALB (its cert chains to the same CA).
+- **Two TLS hops:** client↔ALB uses the **org-CA server cert** (the one that matters); ALB↔private-domain uses the **self-signed** cert. The ALB never verifies the backend cert.
+- **Why a separate self-signed cert?** A private API Gateway custom domain won't serve a CA-signed cert (its TLS frontend resets the connection). Since that hop is internal and unverified, a throwaway self-signed cert satisfies it while the org-PKI cert stays where clients actually see it.
+
 ## Files
 
 | File | Purpose |

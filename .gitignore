@@ -21,3 +21,7 @@ certs/
 
 # Build artifacts
 lambda.zip
+
+# Python bytecode
+__pycache__/
+*.pyc
