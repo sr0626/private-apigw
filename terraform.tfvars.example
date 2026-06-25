@@ -1,5 +1,8 @@
 # Copy to terraform.tfvars and fill in your values.
 
+# Optional: AWS region (defaults to us-west-2).
+# aws_region = "us-west-2"
+
 vpc_id = "vpc-xxxxxxxxxxxxxxxxx"
 
 subnet_ids = [
@@ -7,7 +10,12 @@ subnet_ids = [
   "subnet-yyyyyyyyyyyyyyyyy",
 ]
 
-# Regional ACM certificate for the custom domain (us-east-1).
-acm_cert_arn = "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+# Note: the server cert is created externally by the org PKI
+# (./scripts/gen-pki.sh) and imported into ACM by acm.tf — no acm_cert_arn.
 
 domain_name = "api.example.com"
+
+# Optional: org PKI material produced by ./scripts/gen-pki.sh (defaults shown).
+# mtls_ca_bundle_path = "certs/pki/ca.crt"
+# server_cert_path    = "certs/pki/server.crt"
+# server_key_path     = "certs/pki/server.key"

@@ -1,6 +1,6 @@
 resource "aws_vpc_endpoint" "execute_api" {
   vpc_id            = var.vpc_id
-  service_name      = "com.amazonaws.us-east-1.execute-api"
+  service_name      = "com.amazonaws.${var.aws_region}.execute-api"
   vpc_endpoint_type = "Interface"
 
   subnet_ids         = var.subnet_ids
@@ -24,11 +24,13 @@ resource "aws_security_group" "vpce_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Only the mTLS ALB may reach the VPC endpoint. Clients must go through the
+  # ALB (and pass mutual TLS) rather than hitting the endpoint directly.
   ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.this.cidr_block]
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
   }
 }
 
